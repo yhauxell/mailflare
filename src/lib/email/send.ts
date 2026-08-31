@@ -22,6 +22,65 @@ export type SendEmailInput = {
 	attachments?: AttachmentContent[];
 };
 
+async function sendViaResend(
+	apiKey: string,
+	payload: {
+		from: string;
+		to: string;
+		subject: string;
+		headers?: Record<string, string>;
+		html?: string;
+		text?: string;
+		attachments?: AttachmentContent[];
+	},
+): Promise<{ messageId: string }> {
+	const attachments = (payload.attachments ?? []).map((att) => {
+		let contentBase64 = "";
+		if (typeof att.content === "string") {
+			contentBase64 = btoa(att.content);
+		} else {
+			const bytes = att.content instanceof Uint8Array ? att.content : new Uint8Array(att.content);
+			let binary = "";
+			for (let i = 0; i < bytes.byteLength; i++) {
+				binary += String.fromCharCode(bytes[i]);
+			}
+			contentBase64 = btoa(binary);
+		}
+		return {
+			filename: att.filename,
+			content: contentBase64,
+		};
+	});
+
+	const response = await fetch("https://api.resend.com/emails", {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			from: payload.from,
+			to: [payload.to],
+			subject: payload.subject,
+			headers: payload.headers,
+			html: payload.html,
+			text: payload.text,
+			attachments: attachments.length > 0 ? attachments : undefined,
+		}),
+	});
+
+	if (!response.ok) {
+		const errorData = (await response.json().catch(() => ({ message: `HTTP ${response.status}` }))) as {
+			message?: string;
+			error?: string;
+		};
+		throw new Error(errorData.message || errorData.error || `Resend send failed: ${response.statusText}`);
+	}
+
+	const result = (await response.json()) as { id: string };
+	return { messageId: result.id };
+}
+
 export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Promise<{ messageId: string }> {
 	const db = getDb(env);
 	const sender = await getAuthorizedSenderAddress(env, input);
@@ -70,40 +129,55 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 	});
 
 	try {
-		const response = await env.EMAIL.send({
-			from: sender.fromAddr,
-			to: input.to,
-			subject: input.subject,
-			headers: input.headers,
-			html: input.html,
-			text: input.text,
-			attachments: attachments.map((attachment) =>
-				attachment.disposition === "inline" && attachment.contentId
-					? {
-							filename: attachment.filename,
-							type: attachment.type,
-							content: attachment.content,
-							disposition: "inline" as const,
-							contentId: attachment.contentId,
-						}
-					: {
-							filename: attachment.filename,
-							type: attachment.type,
-							content: attachment.content,
-							disposition: "attachment" as const,
-						},
-			),
-		});
+		let providerMessageId: string;
+		if (env.RESEND_API_KEY?.trim()) {
+			const resendRes = await sendViaResend(env.RESEND_API_KEY.trim(), {
+				from: sender.fromAddr,
+				to: input.to,
+				subject: input.subject,
+				headers: input.headers,
+				html: input.html,
+				text: input.text,
+				attachments,
+			});
+			providerMessageId = resendRes.messageId;
+		} else {
+			const response = await env.EMAIL.send({
+				from: sender.fromAddr,
+				to: input.to,
+				subject: input.subject,
+				headers: input.headers,
+				html: input.html,
+				text: input.text,
+				attachments: attachments.map((attachment) =>
+					attachment.disposition === "inline" && attachment.contentId
+						? {
+								filename: attachment.filename,
+								type: attachment.type,
+								content: attachment.content,
+								disposition: "inline" as const,
+								contentId: attachment.contentId,
+							}
+						: {
+								filename: attachment.filename,
+								type: attachment.type,
+								content: attachment.content,
+								disposition: "attachment" as const,
+							},
+				),
+			});
+			providerMessageId = response.messageId;
+		}
 
 		await db
 			.update(messages)
-			.set({ status: "sent", providerMessageId: response.messageId })
+			.set({ status: "sent", providerMessageId })
 			.where(eq(messages.id, messageId));
 		await db.update(outboundJobs).set({ status: "sent", updatedAt: new Date() }).where(eq(outboundJobs.id, jobId));
 
 		await dispatchWebhooks(env, input.userId, "message.outbound", {
 			messageId,
-			providerMessageId: response.messageId,
+			providerMessageId,
 			to: input.to,
 		});
 		await createAuditLog(env, {
