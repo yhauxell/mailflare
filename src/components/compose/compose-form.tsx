@@ -160,37 +160,43 @@ export function ComposeForm({
 	async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		setLoading(true);
-		const res = await authFetch("/api/send", {
-			method: "POST",
-			body: buildSendFormData({
-				attachments,
-				from: fromAddr,
-				to,
-				subject,
-				text,
-				mailboxId: selectedMailbox?.id,
-			}),
-		});
-		const data = (await res.json()) as { messageId?: string; error?: string };
-		setLoading(false);
-
-		if (!res.ok) {
-			setToast({ type: "error", message: data.error ?? "Send failed" });
-			return;
-		}
-
-		if (draftId) {
-			void authFetch(`/api/drafts/${draftId}`, { method: "DELETE" }).finally(() => {
-				window.dispatchEvent(new Event("mailflare:messages-changed"));
+		try {
+			const res = await authFetch("/api/send", {
+				method: "POST",
+				body: buildSendFormData({
+					attachments,
+					from: fromAddr,
+					to,
+					subject,
+					text,
+					mailboxId: selectedMailbox?.id,
+				}),
 			});
+			const data = (await res.json()) as { messageId?: string; error?: string };
+
+			if (!res.ok) {
+				setToast({ type: "error", message: data.error ?? "Send failed" });
+				return;
+			}
+
+			if (draftId) {
+				void authFetch(`/api/drafts/${draftId}`, { method: "DELETE" }).finally(() => {
+					window.dispatchEvent(new Event("mailflare:messages-changed"));
+				});
+			}
+			setDraftId(null);
+			setTo("");
+			setSubject("");
+			setText(applyMailboxSignature("", "", selectedMailbox?.signature));
+			setAttachments([]);
+			setToast({ type: "success", message: "Message sent" });
+			window.dispatchEvent(new Event("mailflare:messages-changed"));
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Send failed";
+			setToast({ type: "error", message });
+		} finally {
+			setLoading(false);
 		}
-		setDraftId(null);
-		setTo("");
-		setSubject("");
-		setText(applyMailboxSignature("", "", selectedMailbox?.signature));
-		setAttachments([]);
-		setToast({ type: "success", message: "Message sent" });
-		window.dispatchEvent(new Event("mailflare:messages-changed"));
 	}
 
 	function addAttachments(files: FileList | null) {
