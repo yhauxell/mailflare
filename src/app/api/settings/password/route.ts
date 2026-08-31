@@ -23,18 +23,19 @@ export async function PATCH(request: Request) {
 		return NextResponse.json({ error: "Invalid request" }, { status: 400 });
 	}
 
-	if (!verifyPassword(parsed.currentPassword, user.passwordHash)) {
+	if (!(await verifyPassword(parsed.currentPassword, user.passwordHash))) {
 		return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 });
 	}
 
-	if (verifyPassword(parsed.newPassword, user.passwordHash)) {
+	if (await verifyPassword(parsed.newPassword, user.passwordHash)) {
 		return NextResponse.json({ error: "New password must be different from the current password" }, { status: 400 });
 	}
 
+	const newHash = await hashPassword(parsed.newPassword);
 	const db = getDb(env);
 	await db
 		.update(users)
-		.set({ passwordHash: hashPassword(parsed.newPassword) })
+		.set({ passwordHash: newHash })
 		.where(eq(users.id, user.id));
 
 	return NextResponse.json({ ok: true });

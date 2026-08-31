@@ -46,6 +46,7 @@ export async function POST(request: Request) {
 	if (mailbox) return NextResponse.json({ error: "Email address is already assigned" }, { status: 409 });
 
 	const userId = newId("usr");
+	const passwordHash = await hashPassword(input.password);
 	try {
 		await ensureEmailRoutingRuleToWorker(access.env, domain.zoneId, email);
 		const [account] = await db
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
 			.values({
 				id: userId,
 				email,
-				passwordHash: hashPassword(input.password),
+				passwordHash,
 				name: username,
 				role: input.role,
 				createdByUserId: access.user!.id,

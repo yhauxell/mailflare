@@ -49,11 +49,12 @@ export async function POST(request: Request) {
 	}
 
 	const userId = newId("usr");
+	const passwordHash = await hashPassword(password);
 	await db.insert(users).values({
 		id: userId,
 		email,
 		resetEmail: firstRunParsed.data.resetEmail,
-		passwordHash: hashPassword(password),
+		passwordHash,
 		name,
 		role: "admin",
 	});

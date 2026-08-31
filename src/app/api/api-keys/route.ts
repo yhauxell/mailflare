@@ -39,7 +39,7 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 	}
 
-	const { fullKey, prefix, hash } = generateApiKey();
+	const { fullKey, prefix, hash } = await generateApiKey();
 	const db = getDb(env);
 	const id = newId("key");
 	await db.insert(apiKeys).values({

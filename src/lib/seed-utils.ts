@@ -234,10 +234,11 @@ export async function ensureDemoUser(env: CloudflareEnv) {
 	if (existing) return existing;
 
 	const id = newId("usr");
+	const passwordHash = await hashPassword(demoCredentials.password);
 	await db.insert(users).values({
 		id,
 		email: demoCredentials.email,
-		passwordHash: hashPassword(demoCredentials.password),
+		passwordHash,
 		name: "Demo User",
 	});
 
